@@ -20,6 +20,46 @@ Geofence behaviour:
 This matches the requirements in
 [issue #1](https://github.com/uselessgoddess/test-for-test/issues/1).
 
+## Background & terminated-app notifications
+
+The exit notification is delivered **even when the app is in the background or
+fully switched off** — it does not need to be running.
+
+How it works:
+
+- `native_geofence` registers the zone with the OS region-monitoring service
+  (Android `GeofencingClient`, iOS `CLLocationManager`). The OS — not the app —
+  watches your location.
+- When you cross the boundary, the OS wakes the process and `native_geofence`
+  starts a dedicated **background Flutter isolate** that runs
+  [`geofenceTriggered`](lib/geofence_callback.dart). That isolate registers the
+  app's plugins (including `flutter_local_notifications`) on its own, so the
+  notification is posted without the UI ever being alive.
+- Forwarding the event to the on-screen status text is best-effort: if the UI
+  isolate is gone, the lookup is simply skipped and the notification still
+  fires.
+
+What makes this work:
+
+| Platform | Enabler |
+| -------- | ------- |
+| Android  | Background-location permission (**"Allow all the time"**), the `native_geofence` broadcast receivers / foreground service and `RECEIVE_BOOT_COMPLETED` (re-registers geofences after reboot), all declared in [`AndroidManifest.xml`](android/app/src/main/AndroidManifest.xml) |
+| iOS      | `NSLocationAlwaysAndWhenInUseUsageDescription`, the `location` background mode, and `NativeGeofencePlugin.setPluginRegistrantCallback` in [`AppDelegate.swift`](ios/Runner/AppDelegate.swift) so the relaunched background isolate can post notifications |
+
+### Verifying it manually
+
+1. Run the app, press **Create geofence**, and grant location
+   **"Allow all the time"** plus notification permission.
+2. Fully close the app (swipe it from the recents/app switcher).
+3. Move ~30 m away (or use the emulator's location controls / a mock-location
+   app to jump outside the 50 m circle). A *"You left the zone"* notification
+   appears even though the app is closed.
+4. Move back inside the circle — the notification clears.
+
+> Note: the Android emulator only fires geofence events when something is
+> actively reading the device location. Open Google Maps once to get a fix, as
+> documented in the [`native_geofence` README](https://pub.dev/packages/native_geofence#known-issues).
+
 ## Platform requirements
 
 | Platform | Minimum version |
